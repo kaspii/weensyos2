@@ -23,6 +23,8 @@
 #define MAX_INT		0x7FFFFFFF
 
 int first = 1;
+int runs = 0;
+
 // +---------+-----------------------+--------+---------------------+---------/
 // | Base    | Kernel         Kernel | Shared | App 0         App 0 | App 1
 // | Memory  | Code + Data     Stack | Data   | Code + Data   Stack | Code ...
@@ -62,10 +64,10 @@ int scheduling_algorithm;
 // UNCOMMENT THESE LINES IF YOU DO EXERCISE 4.B
 // Use these #defines to initialize your implementation.
 // Changing one of these lines should change the initialization.
-// #define __SHARE_1__ 1
-// #define __SHARE_2__ 2
-// #define __SHARE_3__ 3
-// #define __SHARE_4__ 4
+#define __SHARE_1__ 1
+#define __SHARE_2__ 2
+#define __SHARE_3__ 3
+#define __SHARE_4__ 4
 
 // USE THESE VALUES FOR SETTING THE scheduling_algorithm VARIABLE.
 #define __EXERCISE_1__   0  // the initial algorithm
@@ -90,7 +92,7 @@ start(void)
 
 	// Set up hardware (schedos-x86.c)
 	segments_init();
-	interrupt_controller_init(1);
+	interrupt_controller_init(0);
 	console_clear();
 
 	// Initialize process descriptors as empty
@@ -104,6 +106,12 @@ start(void)
 	proc_array[2].p_priority = __PRIORITY_2__;
 	proc_array[3].p_priority = __PRIORITY_3__;
 	proc_array[4].p_priority = __PRIORITY_4__;
+
+	proc_array[1].p_share = __SHARE_1__;
+	proc_array[2].p_share = __SHARE_2__;
+	proc_array[3].p_share = __SHARE_3__;
+	proc_array[4].p_share = __SHARE_4__;
+
 	// Set up process descriptors (the proc_array[])
 	for (i = 1; i < NPROCS; i++) {
 		process_t *proc = &proc_array[i];
@@ -133,7 +141,7 @@ start(void)
 	//   41 = p_priority algorithm (exercise 4.a)
 	//   42 = p_share algorithm (exercise 4.b)
 	//    7 = any algorithm that you may implement for exercise 7
-	scheduling_algorithm = __EXERCISE_4A__;
+	scheduling_algorithm = __EXERCISE_4B__;
 
 	// Switch to the first process.
 	run(&proc_array[1]);
@@ -182,15 +190,18 @@ interrupt(registers_t *reg)
 		current->p_exit_status = reg->reg_eax;
 		schedule();
 
-	case INT_SYS_USER1:
-		// 'sys_user*' are provided for your convenience, in case you
-		// want to add a system call.
-		/* Your code here (if you want). */
-		run(current);
+	 case INT_SYS_PRIORITY: //(4A)
+                current->p_priority = reg->reg_eax;
+                // run(current);
+                schedule();
+                break;
 
-	case INT_SYS_USER2:
-		/* Your code here (if you want). */
-		run(current);
+        case INT_SYS_SHARE: //(4B)
+                current->p_share = reg->reg_eax;
+                // run(current);
+                schedule();
+                break;
+
 
 	case INT_SYS_ATOMICPRINT:
                 *cursorpos++ = reg->reg_eax;
@@ -249,6 +260,32 @@ priority_array(pid_t *arr)
         }
 
         return size;
+}
+
+pid_t
+next_share_proc(void)
+{
+        int total = 0, subtotal = 0;
+        pid_t i;
+
+        for (i = 0; i < NPROCS; i++)
+                if (proc_array[i].p_state != P_EMPTY && proc_array[i].p_state != P_ZOMBIE)
+                        total += proc_array[i].p_share;
+
+        int offset = runs % total;
+        runs++;
+
+        for (i = 0; i < NPROCS; i++)
+        {
+                if (proc_array[i].p_state != P_EMPTY && proc_array[i].p_state != P_ZOMBIE)
+                {
+                        subtotal += proc_array[i].p_share;
+                        if (offset < subtotal)
+                                return i;
+                }
+        }
+
+        return -1;
 }
 
 /*****************************************************************************
@@ -320,7 +357,17 @@ schedule(void)
                                 run(&proc_array[pid]);
                 }
         }
-	
+	else if (scheduling_algorithm == __EXERCISE_4B__)
+        {
+                while (1)
+                {
+                        pid_t pid = next_share_proc();
+
+                        // run process if runnable
+                        if (proc_array[pid].p_state == P_RUNNABLE)
+                                run(&proc_array[pid]);
+                }
+        }	
 	// If we get here, we are running an unknown scheduling algorithm.
 	cursorpos = console_printf(cursorpos, 0x100, "\nUnknown scheduling algorithm %d\n", scheduling_algorithm);
 	while (1)
